@@ -1,0 +1,12 @@
+/target
+/.output
+config.toml
+/ecoc_data0
+/.VSCodeCounter
+/working_folder
+/blog
+/script/__pycache__
+/.vscode
+/script
+/imgs
+/configs
