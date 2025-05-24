@@ -4,11 +4,9 @@ use fxhash::FxHashMap;
 
 use crate::{
     config::Config,
-    debugger,
     demand::Demand,
     network::{CoreIndex, Fiber, FiberID, Network, PortID, XCType},
     np_core::parameters::{MAX_BYPASS_LEN, MIN_BYPASS_LEN},
-    topology::Topology,
     utils::enumerate_subsequences,
     Edge, SD,
 };
@@ -26,63 +24,15 @@ pub use expand_wxc::expand_wxc_fibers;
 mod expand_wbxc;
 pub use expand_wbxc::expand_wbxc_fibers;
 
-pub fn remove_fibers_by_edges(
-    config: &Config,
-    network: &mut Network,
-    target: &[Edge],
-) -> Vec<FiberID> {
-    let mut removed_fibers = vec![];
-
+pub fn remove_fibers_by_edges(config: &Config, network: &mut Network, target: &[Edge]) {
     for edge in target {
         let fiber_ids_on_edge = network.get_fiber_id_on_edge(edge);
-        if let Some(first_w2w_fiber) = fiber_ids_on_edge
-            .iter()
-            .find(|x| network.get_fiber_sd_xc_type_by_id(x) == [XCType::Wxc, XCType::Wxc])
-        {
+        if let Some(first_w2w_fiber) = fiber_ids_on_edge.iter().find(|x| network.get_fiber_sd_xc_type_by_id(x) == [XCType::Wxc, XCType::Wxc]) {
             network.delete_fiber(config, first_w2w_fiber);
-            removed_fibers.push(*first_w2w_fiber);
-        }
-    }
-
-    removed_fibers
-}
-
-pub fn remove_fibers_by_edges_with_types(
-    config: &Config,
-    network: &mut Network,
-    edge: &Edge,
-    src_type: XCType,
-    dst_type: XCType,
-) {
-    let fiber_ids_on_edge = network.get_fiber_id_on_edge(edge);
-    if let Some(first_w2w_fiber) = fiber_ids_on_edge
-        .iter()
-        .find(|x| network.get_fiber_sd_xc_type_by_id(x) == [src_type, dst_type])
-    {
-        network.delete_fiber(config, first_w2w_fiber);
-        // eprintln!("Should be modified, wxc is not only one xc but other xc should be deleted by this function.")
-    }
-}
-
-/// すべての隣接ノード間のWXC-WXCファイバを1本ずつ削除する
-pub fn remove_all_adjacent_w2w_fibers(config: &Config, network: &mut Network) {
-    // すべてのエッジ（隣接ノードのペア）を取得
-    let all_edges: Vec<Edge> = network.get_all_edges();
-
-    for edge in all_edges {
-        // このエッジに存在するすべてのファイバIDを取得
-        let fiber_ids_on_edge = network.get_fiber_id_on_edge(&edge);
-
-        // WXC-WXCファイバを1本だけ削除
-        if let Some(fiber_id) = fiber_ids_on_edge
-            .iter()
-            .find(|fid| network.get_fiber_sd_xc_type_by_id(fid) == [XCType::Wxc, XCType::Wxc])
-        {
-            network.delete_fiber(config, fiber_id);
+            // eprintln!("Should be modified, wxc is not only one xc but other xc should be deleted by this function.")
         }
     }
 }
-
 pub fn generate_new_fiber(
     network: &mut Network,
     edge: &Edge,
@@ -100,49 +50,6 @@ pub fn generate_new_fiber(
     network.regist_port_id(&dst_device, &dst_xc_id);
 
     Fiber::new_scf(edge, src_device, dst_device, [src_type, dst_type])
-}
-
-/// 全隣接ノードの組み合わせに対して FXC→FXC, FXC→WXC, WXC→FXC を生成する
-pub fn generate_all_adjacent_fibers_fxc_wxc(
-    config: &Config,
-    topology: &Topology,
-    network: &mut Network,
-) {
-    let mut fibers: Vec<Fiber> = vec![];
-
-    for edge in &topology.edges {
-        //println!("edge: {:?}/n", edge);
-
-        // FXC -> FXC
-        let fiber_f2w = generate_new_fiber(network, edge, XCType::Fxc, XCType::Wxc);
-        //println!("edge: {:?}/n", fiber_f2f);
-        fibers.push(fiber_f2w);
-    }
-
-    // 登録とログ出力
-    debugger::log_fibers_expand(config, network, &fibers);
-    network.regist_fibers(fibers);
-}
-
-pub fn generate_all_adjacent_fibers_fxc_fxc(
-    config: &Config,
-    topology: &Topology,
-    network: &mut Network,
-) {
-    let mut fibers: Vec<Fiber> = vec![];
-
-    for edge in &topology.edges {
-        //println!("edge: {:?}/n", edge);
-
-        // FXC -> FXC
-        let fiber_f2f = generate_new_fiber(network, edge, XCType::Fxc, XCType::Fxc);
-        //println!("edge: {:?}/n", fiber_f2f);
-        fibers.push(fiber_f2f);
-    }
-
-    // 登録とログ出力
-    debugger::log_fibers_expand(config, network, &fibers);
-    network.regist_fibers(fibers);
 }
 
 fn generate_new_mc_fiber(
@@ -270,19 +177,18 @@ pub fn find_frequently_emerge_sub_routes_sd_with_xc_types(
     // 全てのルートがタブーリストに入れられてしまった
     None
 }
-
-pub fn find_emerge_sub_routes_sd_with_xc_types(
+pub fn find_emerge_sub_routes_sd_with_xc_types_with_len(
     network: &Network,
     demand_list: &[Demand],
     taboo_list: &[SD],
     xc_types: &[XCType],
+    bypass_len: usize, 
 ) -> Vec<SD> {
     let mut counter: FxHashMap<SD, usize> = FxHashMap::default();
 
     for demand in demand_list {
         if !demand.fiber_ids.is_empty() {
-            let sub_routes =
-                enumerate_subsequences(&demand.fiber_ids, MIN_BYPASS_LEN, Some(MAX_BYPASS_LEN));
+            let sub_routes = enumerate_subsequences(&demand.fiber_ids, bypass_len, Some(bypass_len));
 
             for sub_route in sub_routes {
                 let first_fiber = network.get_fiber_by_id(sub_route.first().unwrap());
@@ -330,127 +236,23 @@ pub fn find_emerge_sub_routes_sd_with_xc_types(
     result
 }
 
-pub fn find_least_emerge_sub_routes_sd_with_xc_types(
-    network: &Network,
-    demand_list: &[Demand],
-    taboo_list: &[SD],
-    xc_types: &[XCType],
-) -> Option<SD> {
-    let mut counter: FxHashMap<SD, usize> = FxHashMap::default();
-
-    for demand in demand_list {
-        if !demand.fiber_ids.is_empty() {
-            let sub_routes =
-                enumerate_subsequences(&demand.fiber_ids, MIN_BYPASS_LEN, Some(MAX_BYPASS_LEN));
-
-            for sub_route in sub_routes {
-                let first_fiber = network.get_fiber_by_id(sub_route.first().unwrap());
-                let last_fiber = network.get_fiber_by_id(sub_route.last().unwrap());
-
-                let first_xc_type = network.get_fiber_sd_xc_type(first_fiber)[0];
-                let last_xc_type = network.get_fiber_sd_xc_type(last_fiber)[1];
-
-                let top_layer_xc_type = *xc_types.first().unwrap();
-                if first_xc_type == top_layer_xc_type && last_xc_type == top_layer_xc_type {
-                    let mut top_layer_port_count = 1;
-                    for fiber_id in &sub_route {
-                        if network.get_fiber_sd_xc_type_by_id(fiber_id)[1] == top_layer_xc_type {
-                            top_layer_port_count += 1;
-                            if top_layer_port_count > 2 {
-                                break;
-                            }
-                        }
-                    }
-
-                    if top_layer_port_count == 2 {
-                        continue;
-                    }
-
-                    let sd = SD::new_from_nodes(first_fiber.edge.src, last_fiber.edge.dst);
-                    *counter.entry(sd).or_insert(0) += 1;
-                }
-            }
-        }
-    }
-
-    let mut counter_vec: Vec<(SD, usize)> = counter
-        .iter()
-        .map(|(x_sd, x_count)| (*x_sd, *x_count))
-        .collect();
-
-    // 出現回数が最も少ない順にソート
-    counter_vec.sort_by_key(|(_sd, count)| *count);
-
-    for (min_sd, _min_count) in counter_vec {
-        if !taboo_list.contains(&min_sd) {
-            return Some(min_sd);
-        }
-    }
-
-    None
-}
-
-// pub fn expand_fibers_with_xc_types(config: &Config, network: &mut Network, target_edges: &[Edge], xc_types: &[XCType]) {
-//     match xc_types {
-//         [XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
-//         [XCType::Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
-//         [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
-//         [XCType::Wxc, XCType::Sxc]  => expand_sxc_fibers(config, network, target_edges),
-//         [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => unimplemented!(),
-//         [XCType::Wbxc, XCType::Wxc] | [XCType::Fxc, XCType::Wxc] | [XCType::Fxc, XCType::Wbxc] | [XCType::Sxc, XCType::Wxc] | [XCType::Sxc, XCType::Wbxc]| [XCType::Sxc, XCType::Fxc] => panic!("Ordering Error"),
-//         [XCType::Wxc, XCType::Wxc] | [XCType::Wbxc, XCType::Wbxc] | [XCType::Fxc, XCType::Fxc] | [XCType::Sxc, XCType::Sxc] => panic!("XCTypes Error"),
-//         [XCType::Wbxc, XCType::Added_Wxc] => todo!(),
-//         [XCType::Fxc, XCType::Added_Wxc] => todo!(),
-//         [XCType::Sxc, XCType::Added_Wxc] => todo!(),
-//         [XCType::Added_Wxc, XCType::Wxc] => todo!(),
-//         [XCType::Added_Wxc, XCType::Wbxc] => todo!(),
-//         [XCType::Added_Wxc, XCType::Fxc] => todo!(),
-//         [XCType::Added_Wxc, XCType::Sxc] => todo!(),
-//         [XCType::Added_Wxc, XCType::Added_Wxc] => todo!(),
-//         _ => panic!("Invalid combination of XC types"),
-//     }
-// }
-
-pub fn expand_fibers_with_xc_types(
-    config: &Config,
-    network: &mut Network,
-    target_edges: &[Edge],
-    xc_types: &[XCType],
-) -> (Vec<Fiber>, Vec<(Edge, XCType, XCType)>) {
+pub fn expand_fibers_with_xc_types(config: &Config, network: &mut Network, target_edges: &[Edge], xc_types: &[XCType]) {
     match xc_types {
-        [XCType::Wxc, XCType::Fxc] => expand_fxc_fibers(config, network, target_edges),
-        [XCType::Wxc, XCType::Wbxc] => {
-            println!("TODO: implement expand_wbxc_fibers");
-            (vec![], vec![])
-        }
-        [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc] => {
-            println!("TODO: implement added_wxc→fxc");
-            (vec![], vec![])
-        }
-        [XCType::Wxc, XCType::Sxc] => {
-            println!("TODO: implement expand_sxc_fibers");
-            (vec![], vec![])
-        }
-        [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => {
-            unimplemented!("These combinations are not implemented");
-        }
-        [XCType::Wbxc, XCType::Wxc]
-        | [XCType::Fxc, XCType::Wxc]
-        | [XCType::Fxc, XCType::Wbxc]
-        | [XCType::Sxc, XCType::Wxc]
-        | [XCType::Sxc, XCType::Wbxc]
-        | [XCType::Sxc, XCType::Fxc] => {
-            panic!("Ordering Error");
-        }
-        [XCType::Wxc, XCType::Wxc]
-        | [XCType::Wbxc, XCType::Wbxc]
-        | [XCType::Fxc, XCType::Fxc]
-        | [XCType::Sxc, XCType::Sxc] => {
-            panic!("XCTypes Error");
-        }
-        _ => {
-            println!("TODO: fallback for unknown combination: {:?}", xc_types);
-            (vec![], vec![])
-        }
+        [XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Sxc]  => expand_sxc_fibers(config, network, target_edges),
+        [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => unimplemented!(),
+        [XCType::Wbxc, XCType::Wxc] | [XCType::Fxc, XCType::Wxc] | [XCType::Fxc, XCType::Wbxc] | [XCType::Sxc, XCType::Wxc] | [XCType::Sxc, XCType::Wbxc]| [XCType::Sxc, XCType::Fxc] => panic!("Ordering Error"),
+        [XCType::Wxc, XCType::Wxc] | [XCType::Wbxc, XCType::Wbxc] | [XCType::Fxc, XCType::Fxc] | [XCType::Sxc, XCType::Sxc] => panic!("XCTypes Error"),
+        [XCType::Wbxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Fxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Sxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Wxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Wbxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Fxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Sxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Added_Wxc] => todo!(),
+        _ => panic!("Invalid combination of XC types"),
     }
 }

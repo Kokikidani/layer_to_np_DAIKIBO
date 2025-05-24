@@ -6,7 +6,7 @@ use std::{ env, fs };
 use std::fs::{create_dir_all, File};
 use std::io::Write;
 
-use crate::network::{EdgesType,FiberType, PortID};
+use crate::network::{EdgesType,FiberType};
 use crate::np_core::parameters::{CURVE_GRAPH_SCRIPT, TRAVERSE_GRAPH_SCRIPT};
 use crate::utils::find_x_for_y;
 use crate::{Edge, Node};
@@ -153,16 +153,6 @@ pub fn save_output(
     let filename_prefix = format!("{}/", output_dir);
  
     let _ = output_file_from_2dvec(&format!("{}_edges_advanced.txt", filename_prefix), &edges);
-}
-
-pub fn save_grooming_output(
-    config: &Config,
-    output_dir: &str,
-    network: &Network,
-    demand_list: &[Demand]
-) {
-    create_dir_all(format!("{output_dir}/grooming/")).unwrap();
-    save_analytics(&format!("{output_dir}/grooming/"), network, demand_list);
 }
 
 pub fn save_specific_fiber_info(output_dir: &str, network: &Network, demand_list: &[Demand]) {

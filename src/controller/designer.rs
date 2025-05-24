@@ -2,17 +2,10 @@ use rand::Rng;
 
 use crate::{
     config::Config,
-    controller::{
-        ctrl_utils::peek_least_utilized_fiber,
-        expander::{
-            self, find_emerge_sub_routes_sd_with_xc_types,
-            find_frequently_emerge_sub_routes_sd_with_xc_types,
-            generate_all_adjacent_fibers_fxc_fxc, generate_all_adjacent_fibers_fxc_wxc,
-            generate_new_fiber, remove_all_adjacent_w2w_fibers, remove_fibers_by_edges_with_types,
-        },
-    },
+    controller::expander::{self},
     debugger, demand,
-    network::{Fiber, FiberID, Network, XCType},
+    network::{FiberID, Network, XCType},
+    np_core::parameters::MAX_BYPASS_LEN,
     topology::{get_fixed_shortest_path, get_random_shortest_path, get_shortet_paths, Topology},
     Edge, SD,
 };
@@ -147,111 +140,108 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
     //         break;
     //     }
     // }
-    // まとめることのできるすべてのパスを取得
-    let mut sds: Vec<SD> = expander::find_emerge_sub_routes_sd_with_xc_types(
-        &network,
-        &demand_list,
-        &taboo_list,
-        &xc_types,
-    );
 
-    let original_network = network.clone(); // ← Cloneできるようにしておくことが前提
-    let original_demand_list = demand_list.clone();
-
-    loop {
-        if sds.is_empty() {
-            println!("❌ sds が空になったため終了");
-            break;
-        }
-
-        let mut working_network = original_network.clone();
-        let mut working_demand_list = original_demand_list.clone();
-        let mut sd_fiber_changes: Vec<(SD, Vec<FiberID>, Vec<(Edge, XCType, XCType)>)> = Vec::new();
-
-        delete_all_paths(&mut working_network, &mut working_demand_list);
-
-        for sd in &sds {
-            let route_cand = if xc_types == vec![XCType::Wxc, XCType::Sxc] {
-                let route_cands = get_shortet_paths(&topology, sd, None);
-                get_min_expand_route_cand(&working_network, &route_cands)
-            } else if config.network.fiber_unification {
-                get_fixed_shortest_path(&topology, sd, None)
-            } else {
-                get_random_shortest_path(
-                    &topology,
-                    sd,
-                    working_network.rng.gen_range(0..u64::MAX),
-                    None,
-                )
-            };
-
-            if route_cand.edge_route.len() <= 1 {
-                continue;
-            }
-
-            let target_edges = route_cand.edge_route.clone();
-            let removed_ids =
-                expander::remove_fibers_by_edges(config, &mut working_network, &target_edges);
-            let (_added_ids, added_info) = expander::expand_fibers_with_xc_types(
-                config,
-                &mut working_network,
-                &target_edges,
-                &xc_types,
-            );
-
-            sd_fiber_changes.push((*sd, removed_ids, added_info));
-        }
-
-        assign_all_paths(
-            config,
-            &mut working_network,
-            &topology,
-            &mut working_demand_list,
+    for bypass_len in 2..=MAX_BYPASS_LEN {
+        let mut sds = expander::find_emerge_sub_routes_sd_with_xc_types_with_len(
+            &network,
+            &demand_list,
+            &taboo_list,
+            &xc_types,
+            bypass_len,
         );
 
-        // 空ファイバ削除
-        if xc_types.contains(&XCType::Fxc) || xc_types.contains(&XCType::Sxc) {
-            working_network.delete_empty_fibers_core(config, &mut taboo_list);
-        } else if xc_types.contains(&XCType::Wbxc) {
-            working_network.delete_empty_fibers_wb(config, &mut taboo_list);
-        } else {
-            unimplemented!();
-        }
+        loop {
+            if sds.is_empty() {
+                println!("❌ sds が空になったため終了");
+                break;
+            }
 
-        // ログ出力
-        if xc_types == vec![XCType::Wxc, XCType::Sxc] {
-            debugger::log_net_analysis(
+            let mut working_network = network.clone();
+            let mut working_demand_list = demand_list.clone();
+
+            delete_all_paths(&mut working_network, &mut working_demand_list);
+
+            for sd in &sds {
+                let route_cand = if xc_types == vec![XCType::Wxc, XCType::Sxc] {
+                    let route_cands = get_shortet_paths(&topology, sd, None);
+                    get_min_expand_route_cand(&working_network, &route_cands)
+                } else if config.network.fiber_unification {
+                    get_fixed_shortest_path(&topology, sd, None)
+                } else {
+                    get_random_shortest_path(
+                        &topology,
+                        sd,
+                        working_network.rng.gen_range(0..u64::MAX),
+                        None,
+                    )
+                };
+
+                if route_cand.edge_route.len() <= 1 {
+                    continue;
+                }
+
+                let target_edges = route_cand.edge_route.clone();
+
+                expander::remove_fibers_by_edges(config, &mut working_network, &target_edges);
+                expander::expand_fibers_with_xc_types(
+                    config,
+                    &mut working_network,
+                    &target_edges,
+                    &xc_types,
+                );
+            }
+
+            assign_all_paths(
                 config,
+                &mut working_network,
+                &topology,
+                &mut working_demand_list,
+            );
+
+            // 空ファイバ削除
+            if xc_types.contains(&XCType::Fxc) || xc_types.contains(&XCType::Sxc) {
+                working_network.delete_empty_fibers_core(config, &mut taboo_list);
+            } else if xc_types.contains(&XCType::Wbxc) {
+                working_network.delete_empty_fibers_wb(config, &mut taboo_list);
+            } else {
+                unimplemented!();
+            }
+
+            // ログ出力
+            if xc_types == vec![XCType::Wxc, XCType::Sxc] {
+                debugger::log_net_analysis(
+                    config,
+                    &working_network,
+                    conv_nw_w2w_fiber_count,
+                    &working_demand_list,
+                );
+            } else {
+                debugger::log_analysis(
+                    config,
+                    &working_network,
+                    conv_nw_w2w_fiber_count,
+                    &working_demand_list,
+                );
+            }
+
+            let count_ratio = debugger::analysis::calc_fiber_count_ratio(
                 &working_network,
                 conv_nw_w2w_fiber_count,
-                &working_demand_list,
             );
-        } else {
-            debugger::log_analysis(
-                config,
-                &working_network,
-                conv_nw_w2w_fiber_count,
-                &working_demand_list,
-            );
-        }
 
-        working_network
-            .update_layer_topologies(topology.route_candidates.clone(), &working_demand_list);
-
-        let count_ratio =
-            debugger::analysis::calc_fiber_count_ratio(&working_network, conv_nw_w2w_fiber_count);
-
-        if count_ratio.is_finite() && count_ratio < 1.0 + config.network.fiber_increase_rate_limit {
-
-            // 採用：networkとdemand_listを反映
-            network = working_network;
-            demand_list = working_demand_list;
-            break;
-        } else {
-            sds.pop(); // 最後のSDを削除
+            if count_ratio.is_finite()
+                && count_ratio < 1.0 + config.network.fiber_increase_rate_limit
+            {
+                network = working_network;
+                demand_list = working_demand_list;
+                sds.clear();
+                break;
+            } else {
+                sds.pop();
+            }
         }
     }
-
+    
     output::save_output(config, output_dir, &network, &demand_list);
     output::save_taboo_list(output_dir, &taboo_list);
 

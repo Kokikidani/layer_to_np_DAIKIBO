@@ -117,17 +117,3 @@ pub fn get_least_utilized_fiber<'a>(
 
     min_utilization_fiber
 }
-
-pub fn peek_least_utilized_fiber<'a>(network: &'a Network) -> Option<&'a Fiber> {
-    if let Some((_fiber_id, fiber, utilization)) = get_least_utilized_fiber(network) {
-        println!(
-            "Least utilized fiber → Edge: {:?}, Utilization: {:.2}%",
-            fiber.edge,
-            utilization * 100.0
-        );
-        Some(fiber)
-    } else {
-        println!("⚠ No removable fiber found.");
-        None
-    }
-}
