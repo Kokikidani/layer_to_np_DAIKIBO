@@ -50,7 +50,7 @@ pub fn main(config: &Config) -> (Network, Topology, String) {
 
         // 全てのパスを削除 + バイパスファイバ配置 + 全てのパスを再配置
         delete_all_paths(&mut network, &mut demand_list);
-        expander::expand_fibers_with_xc_types(config, &mut network, &target_edge_route, &[XCType::Wxc, XCType::Wbxc]);
+        //expander::expand_fibers_with_xc_types(config, &mut network, &target_edge_route, &[XCType::Wxc, XCType::Wbxc]);
         assign_all_paths(config, &mut network, &topology, &mut demand_list);
 
         // 使用していないファイバを削除

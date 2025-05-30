@@ -24,14 +24,25 @@ pub use expand_wxc::expand_wxc_fibers;
 mod expand_wbxc;
 pub use expand_wbxc::expand_wbxc_fibers;
 
-pub fn remove_fibers_by_edges(config: &Config, network: &mut Network, target: &[Edge]) {
+pub fn remove_fibers_by_edges(
+    config: &Config,
+    network: &mut Network,
+    target: &[Edge],
+) -> Vec<FiberID> {
+    let mut removed_fiber_ids = Vec::new();
+
     for edge in target {
         let fiber_ids_on_edge = network.get_fiber_id_on_edge(edge);
-        if let Some(first_w2w_fiber) = fiber_ids_on_edge.iter().find(|x| network.get_fiber_sd_xc_type_by_id(x) == [XCType::Wxc, XCType::Wxc]) {
+        if let Some(first_w2w_fiber) = fiber_ids_on_edge
+            .iter()
+            .find(|x| network.get_fiber_sd_xc_type_by_id(x) == [XCType::Wxc, XCType::Wxc])
+        {
             network.delete_fiber(config, first_w2w_fiber);
-            // eprintln!("Should be modified, wxc is not only one xc but other xc should be deleted by this function.")
+            removed_fiber_ids.push(*first_w2w_fiber);
         }
     }
+
+    removed_fiber_ids
 }
 pub fn generate_new_fiber(
     network: &mut Network,
@@ -182,13 +193,14 @@ pub fn find_emerge_sub_routes_sd_with_xc_types_with_len(
     demand_list: &[Demand],
     taboo_list: &[SD],
     xc_types: &[XCType],
-    bypass_len: usize, 
+    bypass_len: usize,
 ) -> Vec<SD> {
     let mut counter: FxHashMap<SD, usize> = FxHashMap::default();
 
     for demand in demand_list {
         if !demand.fiber_ids.is_empty() {
-            let sub_routes = enumerate_subsequences(&demand.fiber_ids, bypass_len, Some(bypass_len));
+            let sub_routes =
+                enumerate_subsequences(&demand.fiber_ids, bypass_len, Some(bypass_len));
 
             for sub_route in sub_routes {
                 let first_fiber = network.get_fiber_by_id(sub_route.first().unwrap());
@@ -236,15 +248,35 @@ pub fn find_emerge_sub_routes_sd_with_xc_types_with_len(
     result
 }
 
-pub fn expand_fibers_with_xc_types(config: &Config, network: &mut Network, target_edges: &[Edge], xc_types: &[XCType]) {
+pub fn expand_fibers_with_xc_types(
+    config: &Config,
+    network: &mut Network,
+    target_edges: &[Edge],
+    xc_types: &[XCType],
+    all_installed_edge: &[Vec<Edge>],
+) -> (Vec<Fiber>, Vec<(Edge, XCType, XCType)>) {
     match xc_types {
-        [XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
-        [XCType::Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
-        [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
-        [XCType::Wxc, XCType::Sxc]  => expand_sxc_fibers(config, network, target_edges),
-        [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => unimplemented!(),
-        [XCType::Wbxc, XCType::Wxc] | [XCType::Fxc, XCType::Wxc] | [XCType::Fxc, XCType::Wbxc] | [XCType::Sxc, XCType::Wxc] | [XCType::Sxc, XCType::Wbxc]| [XCType::Sxc, XCType::Fxc] => panic!("Ordering Error"),
-        [XCType::Wxc, XCType::Wxc] | [XCType::Wbxc, XCType::Wbxc] | [XCType::Fxc, XCType::Fxc] | [XCType::Sxc, XCType::Sxc] => panic!("XCTypes Error"),
+        //[XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Fxc] => {
+            expand_fxc_fibers(config, network, target_edges, all_installed_edge)
+        }
+        [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc] => {
+            expand_fxc_fibers(config, network, target_edges, all_installed_edge)
+        }
+        //[XCType::Wxc, XCType::Sxc] => expand_sxc_fibers(config, network, target_edges),
+        [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => {
+            unimplemented!()
+        }
+        [XCType::Wbxc, XCType::Wxc]
+        | [XCType::Fxc, XCType::Wxc]
+        | [XCType::Fxc, XCType::Wbxc]
+        | [XCType::Sxc, XCType::Wxc]
+        | [XCType::Sxc, XCType::Wbxc]
+        | [XCType::Sxc, XCType::Fxc] => panic!("Ordering Error"),
+        [XCType::Wxc, XCType::Wxc]
+        | [XCType::Wbxc, XCType::Wbxc]
+        | [XCType::Fxc, XCType::Fxc]
+        | [XCType::Sxc, XCType::Sxc] => panic!("XCTypes Error"),
         [XCType::Wbxc, XCType::Added_Wxc] => todo!(),
         [XCType::Fxc, XCType::Added_Wxc] => todo!(),
         [XCType::Sxc, XCType::Added_Wxc] => todo!(),

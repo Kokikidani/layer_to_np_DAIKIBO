@@ -4,7 +4,7 @@ use crate::{
     config::Config,
     controller::expander::{self},
     debugger, demand,
-    network::{FiberID, Network, XCType},
+    network::{Fiber, FiberID, Network, XCType},
     np_core::parameters::MAX_BYPASS_LEN,
     topology::{get_fixed_shortest_path, get_random_shortest_path, get_shortet_paths, Topology},
     Edge, SD,
@@ -141,6 +141,8 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
     //     }
     // }
 
+    let mut all_installed_edges: Vec<Vec<Edge>> = vec![]; // 🔧 バイパスで使ったエッジの履歴
+
     for bypass_len in 2..=MAX_BYPASS_LEN {
         let mut sds = expander::find_emerge_sub_routes_sd_with_xc_types_with_len(
             &network,
@@ -158,8 +160,12 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
 
             let mut working_network = network.clone();
             let mut working_demand_list = demand_list.clone();
+            let mut sd_fiber_changes: Vec<(SD, Vec<FiberID>, Vec<(Edge, XCType, XCType)>)> =
+                Vec::new();
 
             delete_all_paths(&mut working_network, &mut working_demand_list);
+
+            let mut installed_edges: Vec<Vec<Edge>> = vec![];
 
             for sd in &sds {
                 let route_cand = if xc_types == vec![XCType::Wxc, XCType::Sxc] {
@@ -182,13 +188,19 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
 
                 let target_edges = route_cand.edge_route.clone();
 
-                expander::remove_fibers_by_edges(config, &mut working_network, &target_edges);
-                expander::expand_fibers_with_xc_types(
+                // 🔽 ここで target_edges を直接保存
+                installed_edges.push(target_edges.clone());
+
+                let removed_ids =
+                    expander::remove_fibers_by_edges(config, &mut working_network, &target_edges);
+                let (_added_ids, added_info) = expander::expand_fibers_with_xc_types(
                     config,
                     &mut working_network,
                     &target_edges,
                     &xc_types,
+                    &all_installed_edges,
                 );
+                sd_fiber_changes.push((*sd, removed_ids, added_info));
             }
 
             assign_all_paths(
@@ -197,6 +209,40 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
                 &topology,
                 &mut working_demand_list,
             );
+
+            let mut sd_util: Vec<(SD, f64)> = sd_fiber_changes
+                .iter()
+                .map(|(sd, _removed_ids, added_info)| {
+                    let mut total_util = 0.0;
+                    let mut count = 0;
+
+                    for (edge, _, _) in added_info {
+                        // edge に該当するファイバすべてを取り出す
+                        let fibers_on_edge: Vec<&Fiber> = working_network
+                            .get_all_fibers()
+                            .values()
+                            .filter(|fiber| fiber.edge == *edge)
+                            .collect();
+
+                        for fiber in fibers_on_edge {
+                            let used = fiber.count_used_slots() as f64;
+                            let total = fiber.total_slots() as f64;
+                            if total > 0.0 {
+                                total_util += used / total;
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    let avg_util = if count > 0 {
+                        total_util / count as f64
+                    } else {
+                        1.0 // 該当ファイバが見つからなかった場合は高使用率と見なす（削除しないように）
+                    };
+
+                    (*sd, avg_util)
+                })
+                .collect();
 
             // 空ファイバ削除
             if xc_types.contains(&XCType::Fxc) || xc_types.contains(&XCType::Sxc) {
@@ -230,18 +276,22 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
             );
 
             if count_ratio.is_finite()
-                && count_ratio < 1.0 + config.network.fiber_increase_rate_limit
+                && count_ratio <= 1.0 + config.network.fiber_increase_rate_limit
             {
                 network = working_network;
                 demand_list = working_demand_list;
+
+                all_installed_edges.extend(installed_edges);
                 sds.clear();
                 break;
             } else {
-                sds.pop();
+                sd_util.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                if let Some((worst_sd, _)) = sd_util.first() {
+                    sds.retain(|sd| sd != worst_sd);
+                }
             }
         }
     }
-    
     output::save_output(config, output_dir, &network, &demand_list);
     output::save_taboo_list(output_dir, &taboo_list);
 
