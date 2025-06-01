@@ -284,62 +284,6 @@ impl Network {
     }
 
     pub fn delete_empty_fibers_core(&mut self, config: &Config, taboo_list: &mut Vec<SD>) {
-        let mut delete_bypasses: Vec<(CoreIndex, Vec<FiberID>)> = vec![];
-
-        for first_fiber in self.fibers.values() {
-            let first_sd_xc_type = self.get_fiber_sd_xc_type(first_fiber);
-            if first_sd_xc_type == [XCType::Wxc, XCType::Sxc] {
-                'core_index_loop: for core_index_as_usize in 0..first_fiber.get_core_num() {
-                    // コア内の割当状況を確認
-                    if !first_fiber.state_matrixes[core_index_as_usize].is_empty() {
-                        // Used
-                        continue 'core_index_loop;
-                    }
-
-                    // コアがバイパスとして使用されているか?
-                    let dst_xc = self
-                        .get_xc_by_input_port_id(&first_fiber.dst_port_ids[core_index_as_usize]);
-                    if dst_xc.has_destination(&first_fiber.dst_port_ids[core_index_as_usize]) {
-                        let core_index = CoreIndex::new(core_index_as_usize);
-                        let fiber_seq = self.get_fiber_sequence_core(first_fiber, &core_index);
-                        delete_bypasses.push((core_index, fiber_seq.unwrap()));
-                    }
-                }
-            }
-        }
-
-        for (core_index, fiber_seq) in delete_bypasses.into_iter() {
-            let first_fiber = self.get_fiber_by_id(fiber_seq.first().unwrap());
-            let mut prev_input_port_id = first_fiber.dst_port_ids[core_index.index()];
-
-            for fiber_id in fiber_seq.iter().skip(1) {
-                let fiber = self.get_fiber_by_id(fiber_id);
-                let output_port_id = fiber.src_port_ids[core_index.index()];
-
-                let xc = self.get_xc_mut_by_output_port_id(&output_port_id);
-                xc.disconnect_io(&prev_input_port_id, &output_port_id)
-                    .unwrap_or_else(|err| {
-                        eprintln!("{err}");
-                        panic!();
-                    });
-
-                let fiber = self.get_fiber_by_id(fiber_id);
-                prev_input_port_id = fiber.dst_port_ids[core_index.index()];
-            }
-
-            let first_fiber = self.get_fiber_by_id(fiber_seq.first().unwrap());
-            let last_fiber = self.get_fiber_by_id(fiber_seq.last().unwrap());
-            let sd = SD::new_from_nodes(first_fiber.edge.src, last_fiber.edge.dst);
-            taboo_list.push(sd);
-            debugger::log_taboo_list_addition(config, &sd);
-
-            let target_edges: Vec<Edge> = fiber_seq
-                .iter()
-                .map(|fiber_id| self.get_fiber_by_id(fiber_id).edge)
-                .collect();
-            debugger::log_core_bypass_remove(config, &target_edges, &core_index);
-        }
-
         self.delete_empty_fibers(config, taboo_list);
     }
 
@@ -472,56 +416,6 @@ impl Network {
                     debugger::log_taboo_list_addition(config, &sd);
                     taboo_list.push(sd);
                     debugger::log_core_bypass_remove(config, &seq, &CoreIndex::new(0));
-                }
-                // コアが切り離されているか，チェック
-                if fiber_type == [XCType::Sxc, XCType::Wxc] {
-                    for core_index in 0..CORE_FACTOR {
-                        let src_xc = self.get_xc_by_output_port_id(&fiber.src_port_ids[core_index]);
-                        if src_xc.has_source(&fiber.src_port_ids[core_index]) {
-                            debug_println!(src_xc);
-                            debug_println!(core_index);
-                            panic!();
-                        }
-                    }
-                }
-                if fiber_type == [XCType::Wxc, XCType::Sxc] {
-                    for core_index in 0..CORE_FACTOR {
-                        let dst_xc = self.get_xc_by_input_port_id(&fiber.dst_port_ids[core_index]);
-                        if dst_xc.has_destination(&fiber.dst_port_ids[core_index]) {
-                            debug_println!(dst_xc);
-                            debug_println!(core_index);
-                            panic!();
-                        }
-                    }
-                }
-                if fiber_type == [XCType::Sxc, XCType::Sxc] {
-                    for core_index in 0..CORE_FACTOR {
-                        let dst_xc = self.get_xc_by_input_port_id(&fiber.dst_port_ids[core_index]);
-                        if dst_xc.has_destination(&fiber.dst_port_ids[core_index]) {
-                            panic!();
-                        }
-                        let src_xc = self.get_xc_by_output_port_id(&fiber.src_port_ids[core_index]);
-                        if src_xc.has_source(&fiber.src_port_ids[core_index]) {
-                            panic!();
-                        }
-                    }
-                }
-                if fiber_type[0] == XCType::Wbxc {
-                    let xc = self.get_xc_by_output_port_id(&fiber.src_port_ids[0]);
-                    for wb_index in WBIndex::iter() {
-                        if xc.has_source_wb(&fiber.src_port_ids[0], &wb_index) {
-                            debug_println!(fiber);
-                            panic!();
-                        }
-                    }
-                }
-                if fiber_type[1] == XCType::Wbxc {
-                    let xc = self.get_xc_by_input_port_id(&fiber.dst_port_ids[0]);
-                    for wb_index in WBIndex::iter() {
-                        if xc.has_destination_wb(&fiber.dst_port_ids[0], &wb_index) {
-                            panic!();
-                        }
-                    }
                 }
             }
         }

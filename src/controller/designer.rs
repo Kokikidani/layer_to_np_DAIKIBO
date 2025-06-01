@@ -18,9 +18,7 @@ use super::{
 pub(super) mod iterative_designer;
 
 pub(super) mod wxc_wbxc_designer;
-pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology, String) {
-    // `initial_xc_types` を Vec<XCType> に変換して操作可能にする
-    let mut xc_types = initial_xc_types.to_vec();
+pub fn main(config: &Config, xc_types: &[XCType; 2]) -> (Network, Topology, String) {
 
     // 出力ディレクトリの作成
     let output_dir: &str = &output::init_output_dir_wo_suffix(config);
@@ -33,7 +31,7 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
     let topology = Topology::new(config);
 
     // ネットワーク
-    let mut network = Network::new(config, &topology, &xc_types);
+    let mut network = Network::new(config, &topology, xc_types);
     network.update_layer_topologies(topology.route_candidates.clone(), &[]);
 
     // パス需要
@@ -48,7 +46,7 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
         .get(&[XCType::Wxc, XCType::Wxc])
         .unwrap_or(&0);
     println!("conv_nw_w2w_fiber_count:{:?}", conv_nw_w2w_fiber_count);
-    if xc_types == vec![XCType::Wxc, XCType::Sxc] {
+    if *xc_types == [XCType::Wxc, XCType::Sxc] {
         debugger::log_net_analysis(config, &network, conv_nw_w2w_fiber_count, &demand_list);
     } else {
         debugger::log_analysis(config, &network, conv_nw_w2w_fiber_count, &demand_list);
@@ -148,7 +146,7 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
             &network,
             &demand_list,
             &taboo_list,
-            &xc_types,
+            xc_types,
             bypass_len,
         );
 
@@ -168,7 +166,7 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
             let mut installed_edges: Vec<Vec<Edge>> = vec![];
 
             for sd in &sds {
-                let route_cand = if xc_types == vec![XCType::Wxc, XCType::Sxc] {
+                let route_cand = if *xc_types == [XCType::Wxc, XCType::Sxc] {
                     let route_cands = get_shortet_paths(&topology, sd, None);
                     get_min_expand_route_cand(&working_network, &route_cands)
                 } else if config.network.fiber_unification {
@@ -181,24 +179,26 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
                         None,
                     )
                 };
+                //println!("sd:{:?}",sd);
 
                 if route_cand.edge_route.len() <= 1 {
                     continue;
                 }
 
                 let target_edges = route_cand.edge_route.clone();
+                //println!("target_edges:{:?}", target_edges);
 
                 // 🔽 ここで target_edges を直接保存
                 installed_edges.push(target_edges.clone());
 
                 let removed_ids =
                     expander::remove_fibers_by_edges(config, &mut working_network, &target_edges);
-                let (_added_ids, added_info) = expander::expand_fibers_with_xc_types(
+                let (_added_ids, added_info) = expander::expand_fibers_with_xc_types_install_edges(
                     config,
                     &mut working_network,
                     &target_edges,
-                    &xc_types,
-                    &all_installed_edges,
+                    xc_types,
+                    &mut all_installed_edges,
                 );
                 sd_fiber_changes.push((*sd, removed_ids, added_info));
             }
@@ -210,40 +210,6 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
                 &mut working_demand_list,
             );
 
-            let mut sd_util: Vec<(SD, f64)> = sd_fiber_changes
-                .iter()
-                .map(|(sd, _removed_ids, added_info)| {
-                    let mut total_util = 0.0;
-                    let mut count = 0;
-
-                    for (edge, _, _) in added_info {
-                        // edge に該当するファイバすべてを取り出す
-                        let fibers_on_edge: Vec<&Fiber> = working_network
-                            .get_all_fibers()
-                            .values()
-                            .filter(|fiber| fiber.edge == *edge)
-                            .collect();
-
-                        for fiber in fibers_on_edge {
-                            let used = fiber.count_used_slots() as f64;
-                            let total = fiber.total_slots() as f64;
-                            if total > 0.0 {
-                                total_util += used / total;
-                                count += 1;
-                            }
-                        }
-                    }
-
-                    let avg_util = if count > 0 {
-                        total_util / count as f64
-                    } else {
-                        1.0 // 該当ファイバが見つからなかった場合は高使用率と見なす（削除しないように）
-                    };
-
-                    (*sd, avg_util)
-                })
-                .collect();
-
             // 空ファイバ削除
             if xc_types.contains(&XCType::Fxc) || xc_types.contains(&XCType::Sxc) {
                 working_network.delete_empty_fibers_core(config, &mut taboo_list);
@@ -254,7 +220,7 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
             }
 
             // ログ出力
-            if xc_types == vec![XCType::Wxc, XCType::Sxc] {
+            if *xc_types == [XCType::Wxc, XCType::Sxc] {
                 debugger::log_net_analysis(
                     config,
                     &working_network,
@@ -282,13 +248,11 @@ pub fn main(config: &Config, initial_xc_types: &[XCType]) -> (Network, Topology,
                 demand_list = working_demand_list;
 
                 all_installed_edges.extend(installed_edges);
+                //println!("all_installed_edges:{:?}", all_installed_edges);
                 sds.clear();
                 break;
             } else {
-                sd_util.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                if let Some((worst_sd, _)) = sd_util.first() {
-                    sds.retain(|sd| sd != worst_sd);
-                }
+                sds.pop();
             }
         }
     }

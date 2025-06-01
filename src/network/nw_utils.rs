@@ -2,7 +2,7 @@ use fxhash::FxHashMap;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
-use crate::{config::Config, controller::expander::{expand_fxc_fibers, expand_sxc_fibers, expand_wbxc_fibers, expand_wxc_fibers}, network::FiberID, topology::Topology, Edge};
+use crate::{config::Config, controller::expander::{expand_wxc_fibers}, network::FiberID, topology::Topology, Edge};
 
 use super::{EdgesType, Network, XCType, XC};
 

@@ -1,5 +1,6 @@
 use std::cmp::Reverse;
 
+use expand_fxc::{expand_fxc_fibers, expand_fxc_fibers_install_edges};
 use fxhash::FxHashMap;
 
 use crate::{
@@ -16,7 +17,6 @@ pub use expand_sxc::expand_sxc_fibers;
 pub use expand_sxc::get_min_expand_route_cand;
 
 mod expand_fxc;
-pub use expand_fxc::expand_fxc_fibers;
 
 mod expand_wxc;
 pub use expand_wxc::expand_wxc_fibers;
@@ -248,20 +248,20 @@ pub fn find_emerge_sub_routes_sd_with_xc_types_with_len(
     result
 }
 
-pub fn expand_fibers_with_xc_types(
+pub fn expand_fibers_with_xc_types_install_edges(
     config: &Config,
     network: &mut Network,
     target_edges: &[Edge],
     xc_types: &[XCType],
-    all_installed_edge: &[Vec<Edge>],
+    all_installed_edge: &mut Vec<Vec<Edge>>,
 ) -> (Vec<Fiber>, Vec<(Edge, XCType, XCType)>) {
     match xc_types {
         //[XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
         [XCType::Wxc, XCType::Fxc] => {
-            expand_fxc_fibers(config, network, target_edges, all_installed_edge)
+            expand_fxc_fibers_install_edges(config, network, target_edges, all_installed_edge)
         }
         [XCType::Wxc, XCType::Added_Wxc, XCType::Fxc] => {
-            expand_fxc_fibers(config, network, target_edges, all_installed_edge)
+            expand_fxc_fibers_install_edges(config, network, target_edges, all_installed_edge)
         }
         //[XCType::Wxc, XCType::Sxc] => expand_sxc_fibers(config, network, target_edges),
         [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => {
@@ -286,5 +286,25 @@ pub fn expand_fibers_with_xc_types(
         [XCType::Added_Wxc, XCType::Sxc] => todo!(),
         [XCType::Added_Wxc, XCType::Added_Wxc] => todo!(),
         _ => panic!("Invalid combination of XC types"),
+    }
+}
+
+pub fn expand_fibers_with_xc_types(config: &Config, network: &mut Network, target_edges: &[Edge], xc_types: &[XCType; 2]) {
+    match *xc_types{
+        [XCType::Wxc, XCType::Wbxc] => expand_wbxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Fxc]  => expand_fxc_fibers(config, network, target_edges),
+        [XCType::Wxc, XCType::Sxc]  => expand_sxc_fibers(config, network, target_edges),
+        [XCType::Wbxc, XCType::Fxc] | [XCType::Wbxc, XCType::Sxc] | [XCType::Fxc, XCType::Sxc] => unimplemented!(),
+        [XCType::Wbxc, XCType::Wxc] | [XCType::Fxc, XCType::Wxc] | [XCType::Fxc, XCType::Wbxc] | [XCType::Sxc, XCType::Wxc] | [XCType::Sxc, XCType::Wbxc]| [XCType::Sxc, XCType::Fxc] => panic!("Ordering Error"),
+        [XCType::Wxc, XCType::Wxc] | [XCType::Wbxc, XCType::Wbxc] | [XCType::Fxc, XCType::Fxc] | [XCType::Sxc, XCType::Sxc] => panic!("XCTypes Error"),
+        [XCType::Wxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Wbxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Fxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Sxc, XCType::Added_Wxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Wxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Wbxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Fxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Sxc] => todo!(),
+        [XCType::Added_Wxc, XCType::Added_Wxc] => todo!(),
     }
 }
