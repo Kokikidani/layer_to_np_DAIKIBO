@@ -5,8 +5,6 @@ use serde_derive::{ Deserialize, Serialize };
 pub struct NetworkConfig {
     /// 対象物理トポロジ
     pub topology: String,
-
-    pub expanded_topology: String,
     /// WSSのサイズ、1xM
     pub wss_m: usize,
     /// ループ時ファイバ増加率判定値
