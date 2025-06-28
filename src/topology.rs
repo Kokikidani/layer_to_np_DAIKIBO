@@ -51,8 +51,6 @@ impl Topology {
     }
 }
 
-
-
 fn get_route_candidates_from_matrix(link_matrix: &[Vec<bool>]) -> FxHashMap<SD, Vec<RouteCandidate>> {
 
     // グラフの作成
@@ -160,7 +158,7 @@ pub fn get_route_cands_from_graph(g: Graph<usize, usize>) -> FxHashMap<SD, Vec<R
                 }
 
                 pb.inc(1);
-
+                
                 (SD::new(src.index(), dst.index()), o2)
             }
         })

@@ -1,10 +1,10 @@
 use fxhash::FxHashMap;
 use strum::IntoEnumIterator;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{ env, fs };
  
 use std::fs::{create_dir_all, File};
-use std::io::Write;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use crate::network::{EdgesType,FiberType};
 use crate::np_core::parameters::{CURVE_GRAPH_SCRIPT, TRAVERSE_GRAPH_SCRIPT};
@@ -113,7 +113,8 @@ pub fn save_conv_output(
 ) {
     create_dir_all(format!("{output_dir}/conv/")).unwrap();
     save_analytics(&format!("{output_dir}/conv/"), network, demand_list);
- 
+    save_transition_counts_with_device_info(&format!("{output_dir}/conv/"), network, demand_list);
+    save_wxc_fanout_counts_from_network(&format!("{output_dir}/conv/"), network, demand_list);
     // let filename_prefix = format!("{}/conv", format!("{output_dir}"));
     // let fiber_label = network.get_fiber_output();
     // let _ = output_file_from_vec(&format!("{}_fiber_label.csv", filename_prefix), &fiber_label);
@@ -139,10 +140,10 @@ pub fn save_output(
     save_add_drop_count(output_dir, network,demand_list);
     save_specific_fiber_info(output_dir, network, demand_list);
     save_transition_counts_around_node(output_dir, network, demand_list);
-    save_transition_counts_with_device_info(output_dir, network, demand_list);
+    save_transition_counts_with_device_info(&format!("{output_dir}/prop/"), network, demand_list);
     save_specific_fiber_info_with_ids(output_dir, network, demand_list,);
     save_transition_counts_with_slots(output_dir, network, demand_list);
-    
+    save_wxc_fanout_counts_from_network(&format!("{output_dir}/prop/"), network, demand_list);
     // ファイバ配置情報
     // let fiber_label = network.get_fiber_output();
     // let _ = output_file_from_vec(&format!("{}_fiber_label.csv", filename_prefix), &fiber_label);
@@ -599,7 +600,107 @@ pub fn save_transition_counts_with_slots(
     }
 }
 
+pub fn save_wxc_fanout_counts_from_network(
+    output_dir: &str,
+    _network: &Network,
+    _demand_list: &[Demand],
+) {
+    let target_node_id = Node::new(13);
+    let input_path = format!("{}/transitions_with_device_info_{}_counts.txt", output_dir, target_node_id);
+    let output_path = format!("{}/wxc_internal_fanout_node{}_details.txt", output_dir, target_node_id);
 
+    let input_file = File::open(&input_path).expect("transitions log file を開けませんでした");
+    let reader = BufReader::new(input_file);
+
+    let output_file = File::create(&output_path).expect("出力ファイルの作成に失敗しました");
+    let mut writer = BufWriter::new(output_file);
+
+    writeln!(
+        writer,
+        "Node {} のWXC入力ポートごとの出力分岐数と前後ノード:",
+        target_node_id
+    )
+    .unwrap();
+
+    // in_port_id → (出力ポートIDの集合, 前ノードの集合, 次ノードの集合)
+    let mut fanout_map: HashMap<String, (HashSet<String>, HashSet<String>, HashSet<String>)> = HashMap::new();
+
+    for line in reader.lines() {
+        let line = line.expect("行の読み取りに失敗しました");
+
+        if !line.contains(&format!("{}(Wxc_in:[", target_node_id)) {
+            continue;
+        }
+
+        let in_start = line.find("Wxc_in:[").unwrap() + "Wxc_in:[".len();
+        let in_end = line[in_start..].find(']').unwrap() + in_start;
+        let in_port_raw = &line[in_start..in_end];
+        let in_port_id = extract_uuid(in_port_raw);
+
+        let mut out_port_id = None;
+        let mut prev_node = None;
+        let mut next_node = None;
+
+        if let Some(out_start_idx) = line.find("]_out:[") {
+            let out_start = out_start_idx + "]_out:[".len();
+            let out_end = line[out_start..].find(']').unwrap() + out_start;
+            let out_port_raw = &line[out_start..out_end];
+            out_port_id = Some(extract_uuid(out_port_raw));
+        } else if let Some(drop_idx) = line.find(") > ") {
+            out_port_id = Some(format!("DROP_{}", in_port_id));
+        }
+
+        // 前ノード
+        if let Some(left_paren_idx) = line.find('(') {
+            let prev = line[..left_paren_idx].trim();
+            if let Ok(n) = prev.parse::<usize>() {
+                prev_node = Some(n.to_string());
+            }
+        }
+
+        // 次ノード
+        if let Some(gt_idx) = line.rfind(" > ") {
+            let rest = &line[gt_idx + 3..];
+            if let Some(paren_idx) = rest.find('(') {
+                let next = &rest[..paren_idx];
+                if let Ok(n) = next.trim().parse::<usize>() {
+                    next_node = Some(n.to_string());
+                }
+            }
+        }
+
+        let entry = fanout_map.entry(in_port_id.clone()).or_insert_with(|| (HashSet::new(), HashSet::new(), HashSet::new()));
+
+        if let Some(out) = out_port_id {
+            entry.0.insert(out);
+        }
+        if let Some(prev) = prev_node {
+            entry.1.insert(prev);
+        }
+        if let Some(next) = next_node {
+            entry.2.insert(next);
+        }
+    }
+
+    let mut entries: Vec<_> = fanout_map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (in_port, (out_ports, prev_nodes, next_nodes)) in entries {
+        writeln!(writer, "入力ポート {} → 出力ポート数: {}", in_port, out_ports.len()).unwrap();
+        writeln!(writer, "  出力ポート一覧: {:?}", out_ports).unwrap();
+        writeln!(writer, "  前のノード一覧: {:?}", prev_nodes).unwrap();
+        writeln!(writer, "  次のノード一覧: {:?}", next_nodes).unwrap();
+        writeln!(writer, "").unwrap();
+    }
+}
+
+fn extract_uuid(port_str: &str) -> String {
+    port_str
+        .trim()
+        .trim_start_matches("PortID(")
+        .trim_end_matches(')')
+        .to_string()
+}
 
 pub fn save_add_drop_count(output_dir: &str, network: &Network, demand_list: &[Demand]) {
     let mut add_count = FxHashMap::default();
