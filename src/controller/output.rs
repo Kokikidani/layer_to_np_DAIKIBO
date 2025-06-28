@@ -115,6 +115,7 @@ pub fn save_conv_output(
     save_analytics(&format!("{output_dir}/conv/"), network, demand_list);
     save_transition_counts_with_device_info(&format!("{output_dir}/conv/"), network, demand_list);
     save_wxc_fanout_counts_from_network(&format!("{output_dir}/conv/"), network, demand_list);
+    save_fiber_utilization_for_node13(&format!("{output_dir}/conv/"), network);
     // let filename_prefix = format!("{}/conv", format!("{output_dir}"));
     // let fiber_label = network.get_fiber_output();
     // let _ = output_file_from_vec(&format!("{}_fiber_label.csv", filename_prefix), &fiber_label);
@@ -144,6 +145,7 @@ pub fn save_output(
     save_specific_fiber_info_with_ids(output_dir, network, demand_list,);
     save_transition_counts_with_slots(output_dir, network, demand_list);
     save_wxc_fanout_counts_from_network(&format!("{output_dir}/prop/"), network, demand_list);
+    save_fiber_utilization_for_node13(&format!("{output_dir}/prop/"), network);
     // ファイバ配置情報
     // let fiber_label = network.get_fiber_output();
     // let _ = output_file_from_vec(&format!("{}_fiber_label.csv", filename_prefix), &fiber_label);
@@ -701,6 +703,63 @@ fn extract_uuid(port_str: &str) -> String {
         .trim_end_matches(')')
         .to_string()
 }
+
+pub fn save_fiber_utilization_for_node13(output_dir: &str, network: &Network) {
+ let target_node = Node::new(13);
+    let file_path = format!("{}/fiber_utilization_node13_wxc_only.txt", output_dir);
+    let file = File::create(&file_path).expect("ファイル作成失敗");
+    let mut writer = BufWriter::new(file);
+
+    writeln!(writer, "Node 13 の WXC に接続されたファイバの収容率:").unwrap();
+
+    let mut visited_fiber_ids = HashSet::new();
+
+    for edge in network.get_all_edges() {
+        // ノード13に接続されているエッジのみ対象
+        if edge.src != target_node && edge.dst != target_node {
+            continue;
+        }
+
+        let fiber_ids = network.get_fiber_id_on_edge(&edge);
+        for fiber_id in fiber_ids {
+            if visited_fiber_ids.contains(&fiber_id) {
+                continue;
+            }
+            visited_fiber_ids.insert(fiber_id);
+
+            let fiber = network.get_fiber_by_id(&fiber_id);
+            let [src_type, dst_type] = network.get_fiber_sd_xc_type(fiber);
+
+            // ノード13側がWXCでなければスキップ
+            let is_node13_wxc = 
+                (edge.src == target_node && src_type == XCType::Wxc) ||
+                (edge.dst == target_node && dst_type == XCType::Wxc);
+
+            if !is_node13_wxc {
+                continue;
+            }
+
+            let capacity = fiber.residual + fiber.occupancy;
+            if capacity == 0 {
+                continue;
+            }
+
+            let utilization = (fiber.occupancy as f64) / (capacity as f64);
+
+            writeln!(
+                writer,
+                "FiberID: {:?}, Edge: {:?}, src_type: {:?}, dst_type: {:?}, 使用率: {:.2}%",
+                fiber_id,
+                fiber.edge,
+                src_type,
+                dst_type,
+                utilization * 100.0
+            )
+            .unwrap();
+        }
+    }
+}
+
 
 pub fn save_add_drop_count(output_dir: &str, network: &Network, demand_list: &[Demand]) {
     let mut add_count = FxHashMap::default();
